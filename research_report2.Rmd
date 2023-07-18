@@ -1,0 +1,585 @@
+---
+title: "ECON7350 Research Report2"
+author: "WONG HONG NAM"
+date: "2023-05-21"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+# Question 1 - Forecasting CPI Inflation 2022 and 2023 with MEM
+
+In the last research report, we have done a forecast to CPI Inflation with auto-regressive moving average model (ARMA). Using ARMA model, we predict the CPI Inflation from 2022Q1 to 2023Q4 by capturing the past trend of CPI data and extrapolate the trend to predict the future. When we compare the result of research report 1 to the actual CPI data, we found the predicted CPI from out adequate set of models are not capturing the same trend as the actual CPI where the predicted one is tend to go down but the actual one is going up. Thus, in this research report, we are going to use multiple equations models (MEM) where we contain more than one endogenous variables that explained by other variables in the model.
+
+In this report, we will construct a set of MEMs with the same data points as we used to constructed ARMA model in research report 1 and compare the forecasting result of the two methods using the same set of data to the same horizon of predictions. Then, we will estimate MEMs with the dataset from 1990Q3 to 2022Q4 and forecast the CPI inflation for the 4 quarters in 2023.
+
+## Model Identification
+
+In this case, we are going to construct multiple equations models with CPI inflation, real GDP, cash rate and unemployment rate to forecast the CPI inflation from 2022Q1 to 2023Q4. For the multiple equations models, we are going to use Vector Autoregressive model (VAR) to predict the CPI inflation.
+
+### Model with data from 1990Q3 to 2021Q4
+
+```{r VAR model,echo=FALSE}
+setwd('/Users/matthew/Documents/Documents - Hong’s MacBook Air/ECON7350 Applied Econometrics')
+library(dplyr)
+library(zoo)
+library(vars)
+library(pracma)
+library(urca)
+
+# Read data 
+data <- read.delim("report1.csv", header = TRUE,  sep = ",")
+dates <- as.yearqtr(data$quarter)
+cpi <- data$cpi_inflation
+gdp <- data$real_gdp
+unemploy <- data$unemployment_rate
+cash <- data$cash_rate
+x <- cbind(cpi, gdp, unemploy,cash)
+
+VAR_est <- list()
+ic_var <- matrix(nrow = 20,  ncol = 3)
+colnames(ic_var) <- c("p", "aic", "bic")
+for (p in 1:20)
+{
+  VAR_est[[p]] <- VAR(x, p)
+  ic_var[p,] <- c(p, AIC(VAR_est[[p]]),
+                  BIC(VAR_est[[p]]))
+}
+
+ic_aic_var <- ic_var[order(ic_var[,2]),]
+ic_bic_var <- ic_var[order(ic_var[,3]),]
+
+ic_aic_var
+ic_bic_var
+```
+
+We constructed VAR models with lag from 1 to 20. In order to select an adequate set of models, we compare the information criteria of AIC and BIC. We found that p = 2, 3, 4, 5 are ranked high in both AIC and BIC value. Therefore, we selected these 4 models as the adequate set. Next, we are going to perform residual checks of these models for the residual autocorrelation with Breusch-Godfrey test.
+
+```{r VAR residual, echo=FALSE}
+adq_set_var <- as.matrix(ic_var[2:5,])
+adq_idx_var <- c(2:5)
+
+nmods <- length(adq_idx_var)
+for (i in 1:nmods)
+{
+  p <- adq_idx_var[i]
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_est[[p]], type = "BG"))
+}
+```
+
+The null hypothesis of Breusch-Godfrey test is there are no serial correlation pf ant order up to p. From the test result of our adequate set, we found that model with p = 3 and p = 5 reject the null hypothesis at a every level of confidence interval which indicate the autocorrelations appear to be high in these two models. However, with model p = 4, we found it fails to reject the null at 99% confidence interval with p-value slightly larger than 0.01. Therefore, we might want to look into all VAR models we have constructed from p = 1 to p = 20 to investigate their residuals.
+
+```{r VAR residuals 2, echo=FALSE}
+for (p in 1:20)
+{
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_est[[p]], type = "BG"))
+}
+```
+
+From the testing result of all VAR models we estimated, we found that nearly all of the models fail to reject the null hypothesis at any level of confidence interval. Only model with p = 6 reject the null at both 95% and 99% confidence interval while p = 4 reject the null at 99% confidence interval. Therefore, we considered to keep these two models only for the forecasting from 2022Q1 to 2023Q4.
+
+```{r VAR adequate,echo=FALSE}
+adq_set_var <- as.matrix(rbind(ic_var[4,],ic_var[6,]))
+adq_idx_var <- c(4,6)
+```
+
+### Model with data from 1990Q3 to 2022Q4
+
+```{r Var model long, echo=FALSE}
+# Read data 
+data_new <- read.delim("report2.csv", header = TRUE,  sep = ",")
+new_cpi <- data_new$cpi_inflation
+new_dates <- as.yearqtr(data_new$quarter)
+new_gdp <- data_new$real_gdp
+new_unemploy <- data_new$unemployment_rate
+new_cash <- data_new$cash_rate
+new_x <- cbind(new_cpi, new_gdp, new_unemploy,new_cash)
+
+# Model
+VAR_long_est <- list()
+ic_var_long <- matrix(nrow = 20,  ncol = 3)
+colnames(ic_var_long) <- c("p", "aic", "bic")
+for (p in 1:20)
+{
+  VAR_long_est[[p]] <- VAR(new_x, p)
+  ic_var_long[p,] <- c(p, AIC(VAR_est[[p]]),BIC(VAR_est[[p]]))
+}
+
+ic_aic_var_long <- ic_var_long[order(ic_var_long[,2]),]
+ic_bic_var_long <- ic_var_long[order(ic_var_long[,3]),]
+
+ic_aic_var_long
+ic_bic_var_long
+```
+
+With the full dataset, we estimated models from p = 1 to p = 20. Based on the information criteria AIC and BIC, we found that models from p = 2 to p = 5 have rank in both list. Thus ,we are going to include these four models in the adequate set. In next step, we are going to check the residuals for these models with which is similar to the result with the shorter dataset.
+
+```{r VAR residuals long, echo=FALSE}
+adq_set_var_long <- as.matrix(ic_var_long[2:5,])
+adq_idx_var_long <- c(2:5)
+nmods <- length(adq_idx_var_long)
+for (i in 1:nmods)
+{
+  p <- adq_idx_var_long[i]
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_long_est[[p]], type = "BG"))
+}
+```
+
+From the Breusch-Godfrey test, we found that all models in the adequate set fail to reject the null in any significant level which concluded that the estimated residual autocorrelations appear to be quite high. Therefore, we are going to examine all estimated models.
+
+```{r VAR residuals long 2, echo=FALSE}
+for (p in 1:20)
+{
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_long_est[[p]], type = "BG"))
+}
+```
+
+From the testing result of all VAR models we estimated, we found that nearly all of the models reject the null hypothesis at any level of confidence interval. Only model with p = 6 reject the null at 99% confidence interval. Therefore, we considered to keep model with p = 6 for the forecasting the 4 quarter of 2023.
+
+```{r VAR adequate long, echo=FALSE}
+adq_set_var_long <- as.matrix(ic_var_long[6,])
+adq_idx_var_long <- c(6)
+```
+
+## Forecast Computation
+
+### Forecast for 2022Q1 to 2023Q4
+
+For forecasting CPI inflation from 2022Q1 to 2023Q4, we are going to use the first set of adequate set where we estimated using data from 1990Q3 to 2021Q4 only.
+
+```{r VAR forecast,echo=FALSE}
+hrz <- 8
+pre2022 <- as.Date(new_dates) <= as.Date("2021-12-31")
+actual_cpi <- as.matrix(new_cpi[!pre2022])
+VAR_fcst <- list()
+xlim <- c(length(dates) - 3 * hrz,
+          length(dates) + hrz)
+ylim <- c(-1,max(cpi) + 1)
+nmods <- length(adq_idx_var)
+for (i in 1:nmods)
+{
+  p <- adq_idx_var[i]
+  VAR_fcst[[i]] <- predict(VAR_est[[p]], n.ahead = hrz)
+  title_p <- paste("Forecast for CPI Inflation of VAR(",
+                       as.character(p), ")",
+                       sep = "")
+  plot(VAR_fcst[[i]], names = "cpi",
+       xlim = xlim, ylim = ylim,
+       main = title_p,
+       xlab = "Horizon",
+       ylab = "CPI")
+  lines(sum(pre2022) + 1:4, actual_cpi,col = "green",type = "l")
+}
+```
+
+### Forecast for 2023Q1 to 2023Q4 with Full Available Sample
+
+For forecasting CPI inflation from 2023Q1 to 2023Q4, we are going to use the second set of adequate set where we estimated using full data from 1990Q3 to 2022Q4.
+
+```{r VAR forecast long,echo=FALSE}
+hrz <- 4
+VAR_fcst_long <- list()
+xlim <- c(length(new_dates) - 7 * hrz,
+          length(new_dates) + hrz)
+ylim <- c(-1,max(new_cpi) + 1)
+nmods <- length(adq_idx_var_long)
+for (i in 1:nmods)
+{
+  p <- adq_idx_var_long[i]
+  VAR_fcst_long[[i]] <- predict(VAR_long_est[[p]], n.ahead = hrz)
+  title_p <- paste("Forecast for CPI Inflation of VAR(",
+                       as.character(p), ")",
+                       sep = "")
+  plot(VAR_fcst_long[[i]], names = "new_cpi",
+       xlim = xlim, ylim = ylim,
+       main = title_p,
+       xlab = "Horizon",
+       ylab = "CPI")
+}
+```
+
+## Forecast Evaluation and Comparison
+
+### Forecast Evaluation - Forecast for 2022Q1 to 2023Q4
+
+From the models estimated with data from 1990Q3 to 2021Q4, we predicted 8 quarters from 2022Q1 to 2023Q4. Since we have the actual CPI data from 2022Q1 to 2022Q4, we can compare the actual CPI and predicted CPI to evaluate the performance of the models. From the actual data, we knew that the CPI data increase sharply from 3.5 to 5.1 then keep increase in each quarter and reach 7.8 at 2022Q4. However, from the first two plots, we can observe both expected a drop in the first 2 quarter in 2022. The only difference is the degree of drop expected. With longer lag, the volatility of the forecast increase. After the drop for the first 2 quarters, the models expected the CPI to raise for the next 2 quarters in 2022 and keep raising in 2023 with small fluctuation. Obviously, these models cannot correctly capture the continuous raising trend of CPI from 2021 to 2022.
+
+### Forecast Comparison - Compare with ARMA Model in Research Report 1
+
+Recall the forecast results from the model estimated in research report 1, all models have similar forecast that predicted the CPI will first declining in 2022 then slowly stabilize in 2023.
+
+![](images/image-649066352.png){width="225"}
+
+![](images/image-1143686925.png){width="225"}
+
+![](images/image-1868013594.png){width="225"}
+
+![](images/image-1524866786.png){width="225"}
+
+![](images/image-1971124096.png){width="225"}
+
+![](images/image-1962488757.png){width="225"}
+
+![](images/image-119080461.png){width="225"}
+
+![](images/image-18600421.png){width="225"}
+
+Comparing the results from the ARMA models to the results of the VAR models, we found that they both agreed there is a drop in CPI inflation for the first 2 quarters in 2022. However, VAR models captured and provided more insight in longer horizon such as the CPI will raise from Q3 of 2022 and have a trend of raising extend to 2023Q4 which cannot captured with ARMA models we estimated in research report 1. Thus, we can conclude that VAR models perform better than ARMA models in predicting CPI inflation.
+
+## Interpretation and Inference
+
+From the model estimated with data from 1990Q3 to 2022Q4, model with p = 6 predicted that the CPI inflation will keep dropping throughout every quarter in 2023. However, with 95% confidence interval, the model also indicate that there are possibilities that the CPI will further raise in the Q1 of 2023 then followed by drops in the next three quarters.
+
+However, we figured that the model estimated with full available sample does not agree with the models estimated with the sub-sample when forecasting the same period from 2023Q1 to 2023Q4. The sub-sample models expected CPI to keep raising in 2023 while the full sample model expected CPI to drop in 2023. When comparing the sub-sample models with the actual CPI data, we found it cannot capture the keep on increasing CPI in 2022 that are unexpected. There may still have other macroeconomic indicators that is not captured in the models for estimation. So, if we stick with the full sample model, we may expected the CPI inflation will drop in 2023.
+
+Furthermore, by comparing the forecast result estimated in research report 1 and this report, we found that using multiple equations models that include more variables allow us to capture more information and account them into forecasting than using univariate models. For instance, MEMs also capture the change in cash rate of Reserve Bank of Australia where they start raising cash rate to lower the CPI inflation level in 2022. If an univariate model is applied, it cannot capture this and as a result the forecast will be less fit to the actual scenario. Thus, using MEMs to include more variables is better than using an univariate model on forecasting in this case.
+
+# Question 2 - Dynamic Effects with MEMs
+
+In research report 1, we examined the dynamic effect between CPI inflation, unemployment rate and cash rate using auto-regressive distributed lag (ARDL). With this single equation model, we only estimated the effect on how cpi response to shocks on unemployment rate and cash rate. However, from the last part of forecasting, we learnt that using multiple equations models allow us to capture more information that predicted the result more precisely. Hence, we would like to extend this conclusion from question 1 to examine the dynamic effect with multiple equations model.
+
+Here, we would use vector auto-regressive (VAR) model to estimate the relationship betweem the three variables CPI, unemployment rate and cash rate. We are going to compute 2 set on models based on the sample size. The first set of models is estimated by using the subsample set and the second set of models is estimated by using the full sample set.
+
+## Model with Sub-sample set
+
+We are going to use VAR models to work on obtaining the inpulse response functions to examine the dynamic effect between cash rate, unemployment rate and CPI. We excluded GDP here as we would like to focus on the relationship between the three variables without other indicators that sideline the result. Below, we are going to do some testing to figure out some assumptions and restrictions for the model.
+
+```{r var sub dr,echo=FALSE}
+# Read data 
+data <- read.delim("report1.csv", header = TRUE,  sep = ",")
+
+x <- cbind(cpi, unemploy,cash)
+
+# VAR model
+VAR_est <- list()
+ic_var <- matrix(nrow = 20,  ncol = 3)
+colnames(ic_var) <- c("p", "aic", "bic")
+for (p in 1:20){
+  VAR_est[[p]] <- VAR(x, p)
+  ic_var[p,] <- c(p, AIC(VAR_est[[p]]),
+                  BIC(VAR_est[[p]]))
+}
+
+ic_aic_var <- ic_var[order(ic_var[,2]),]
+ic_bic_var <- ic_var[order(ic_var[,3]),]
+
+ic_aic_var
+ic_bic_var
+```
+
+From the information criteria above, we are going to select model with p = 5, 6, 7 as they are the top intercept 3 models in first 10 orders. Then, we are going to perform residual analysis on this adequate set.
+
+```{r var sub dr residual,echo=FALSE}
+# Adequate set
+adq_set_var <- as.matrix(ic_var[5:7,])
+adq_idx_var <- c(5:7)
+
+# Residual
+nmods <- length(adq_idx_var)
+for (i in 1:nmods){
+  p <- adq_idx_var[i]
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_est[[p]],
+                    type = "BG"))
+}
+```
+
+From the residual analysis, all models reject the null with 99% confidence interval while only VAR(6) model reject null with both 95% and 99% confidence interval.
+
+Next, we are looking for the ordering effect of the variables. We are going to use Cholesky decomposition for computing the Impulse Response Functions for all possible orders between the three variables to investigate whether the responses are sensitive to ordering. The assumption here is that Impulse Response Function is sensitive to orderings of variables. Here, we choose VAR model with p = 6 to compute as it has the highest p-value in the adequate set.
+
+```{r var sub ordering,echo=FALSE}
+orders <- perms(1:3)
+vnames <- c("cpi","unemploy","cash")
+for (i in 1:3)
+{
+  for (j in 1:3)
+  {
+    for (k in 1:nrow(orders))
+    {
+      title_i_j_k <- paste0("Response of ",
+                            vnames[i],
+                            " to a shock in ",
+                            vnames[j],
+                            "; x = (",
+                            paste0(vnames[orders[k,]],
+                                   collapse = ", "),
+                            ")'")
+      
+      irf_i_j_k <- irf(VAR(x[,orders[k,]], 6),
+                       n.ahead = 40,
+                       response = vnames[i],
+                       impulse = vnames[j],
+                       boot = TRUE)
+      
+      plot(irf_i_j_k, main = title_i_j_k)
+    }
+  }
+}
+```
+
+For the response of cpi to a shock in cpi, we observed that the responses of any orders provide similar pattern with just slightly different in the magnitude of the responses.
+
+For the response of cpi to a shock in unemployment rate, we observed that there different patterns when we change the order of cpi. Order with (cash,unemploy,cpi), (unemploy,cash,cpi), (unemploy,cash,cpi) and (unemploy,cpi,cash) react with a raise from negative in short term and raise to positive in from mid-term to long term while order with (cash,cpi,unemploy),(cpi,unemploy,cash) and (cpi,cash,unemploy) react first with a raise positively in short term then decline in mid-term negatively and raise again in long term. This is significant that the response of cpi to a shock in unemployment rate is sensitive to the order when cpi ahead of unemployment rate but not affected by the order of cash rate.
+
+For the response of cpi to a shock in cash rate,we observed that the responses of any orders provide similar pattern with just slightly different in the magnitude of the responses.
+
+For the response of unemployment rate to a shock in cpi, we observed similar patterns in the impulse response but we found the response of unemployment rate to a change in cpi is fairly different within the orders. When cpi is ordered prior to unemployment rate, the unemployment rate repsonse negatively in short term. When unemployment rate is ordered prior to cpi, the unemployment rate response positively in short term.
+
+For the response of unemployment rate to a shock in unemployment rate,we observed that the responses of any orders provide similar pattern.
+
+For the response of unemployment rate to a shock in cash rate,we observed that the responses of any orders provide similar pattern.
+
+For the response of cash rate to a shock in cpi, we observed similar patterns in the impulse responses. However, the response of cash rate to change it cpi is larger when unemployment rate is ordered prior to cpi.
+
+For the response of cash rate to a shock in unemployment rate,we observed that the responses of any orders provide similar pattern.
+
+For the response of cash rate to a shock in cash rate,we observed that the responses of any orders provide similar pattern.
+
+Data is not informative on which ordering is most suitable when we consider the response of cpi and unemployment rate with a one-time structural shock to cash rate. Thus, the model constructed will keep the order with (cpi, unemployment rate,cash rate).
+
+Here, we are going to investigate the effect in short-run, medium-run and long-run by using forecast error variance decomposition (FEVD) with the VAR(6) model we used in the previous decomposition.
+
+```{r sub fevd,echo=FALSE}
+FEVD_est <- fevd(VAR_est[[6]], n.ahead = 40)
+plot(FEVD_est, mar = c(2,1,2,1),
+     oma = c(0,1,0,1))
+```
+
+We first examine the response of cpi to a cash rate shock. From the graph, we observed that cash rate has small impact on cpi in short-run but the impact slowly grow in medium-run and stabilze in long-run. This indicate that when a policy related to cash rate is imposed, cpi will not response to it immediately but will response to it slowly in medium-run then the response keep the same in long-run.
+
+We then examine the response of unemployment rate to a cash rate shock. From the graph, we observed that cash rate has very little impact on unemployment rate in short-run but then the impact slowly grow in medium-run followed by a slowly decline and stabilized long-run. This indicate that unemployment rate response to change in cash rate slowly where it start at medium-run and long-run.
+
+Next, we are going to investigate are there any cointegration between variables inside the system. Johansen-Procedure is performed the adequate set of models. If cointergration appears in the system, a vector error correction model (VECM) will be used compute the impulse response function for investigating the dynamic effects.
+
+```{r var sub dr coin,echo=FALSE}
+nmods <- length(adq_idx_var)
+for (i in 1:nmods){
+  p <- adq_idx_var[i]
+  print(paste0("VAR(", p, ")"))
+  print(summary(ca.jo(x, type = "trace", K = p)))
+}
+```
+
+From Johansen-Procedure, we observed for all models in the adequate set reject null r = 0 at 10% while fail to reject r = 1 and r = 2 at any level. We can conclude a VECM with r = 1 is not empirically distunguishable from VECMs with r = 2 or r = 3.
+
+Next, we are going to compute the estimation on VECMs with p = 5,6,7 and r = 0,1,2,3.
+
+```{r var dr sub vecm,echo=FALSE}
+n <- 3
+VECM_est <- list()
+ic_vecm <- matrix(nrow = 4 * (1 + n),  ncol = 4)
+colnames(ic_vecm) <- c("p", "r", "aic", "bic")
+i <- 0
+for (p in 5:7)
+{
+  for (r in 0:n)
+  {
+    i <- i + 1
+    if (r == n)
+    {
+      VECM_est[[i]] <- VAR(x, p)
+    }
+    else if (r == 0)
+    {
+      VECM_est[[i]] <- VAR(diff(x), p - 1)
+    }
+    else
+    {
+      VECM_est[[i]] <- vec2var(ca.jo(x, K = p), r)
+    }
+    ic_vecm[i,] <- c(p, r, AIC(VECM_est[[i]]),
+                     BIC(VECM_est[[i]]))
+  }
+}
+
+ic_aic_vecm <- ic_vecm[order(ic_vecm[,3]),][1:10,]
+ic_bic_vecm <- ic_vecm[order(ic_vecm[,4]),][1:10,]
+
+ic_aic_vecm
+ic_bic_vecm
+```
+
+From the information criteria, we are going to select the interception between AIC and BIC as they include p = 5, 6, 7 with r = 3 and p = 5, 6 with r = 1,2. We also found unrestricted VAR(5) and VAR(6) in the interception and we will keep it at the moment as th rank relatively high with low BIC scores. With the adequate set, we are performing residual analysis on it.
+
+```{r var dr sub vecm 2,echo=FALSE}
+ic_int_vecm <- intersect(as.data.frame(ic_aic_vecm),
+                         as.data.frame(ic_bic_vecm))
+
+
+adq_set_vecm <- as.matrix(arrange(as.data.frame(ic_int_vecm), p, r))
+adq_idx_vecm <- match(data.frame(t(adq_set_vecm[, 1:2])),
+                      data.frame(t(ic_vecm[, 1:2])))
+
+# do a final check of the residuals
+nmods <- length(adq_idx_vecm)
+for (i in 1:nmods)
+{
+  p <- adq_set_vecm[i, 1]
+  r <- adq_set_vecm[i, 2]
+  print(paste0("Checking VECM(", p, ", ", r, ")"))
+  print(serial.test(VECM_est[[adq_idx_vecm[i]]],
+                    type = "BG"))
+}
+```
+
+All residuals look fine with the result above with 99% confidence interval and most of them also look fine with 95% confidence interval.
+
+With the p and r we obtained from above, we are now going to find inference on all possible equilibrium relationships where we imposed a restriction with the Granger Representation Theorem. Since p = 6 contain all specification of r, we have chosen p = 6 to carry out the estimation.
+
+```{r var sub dr er,echo=FALSE}
+p <- 6
+for (r in 1:3)
+{
+  if (r < n)
+  {
+    vec_pr <- ca.jo(x, type = "trace", spec = "transitory")
+    beta_pr <- cajorls(vec_pr, r)$beta
+    
+    bpvals_pr <- beta_pr
+    bpvals_pr[,] <- NA
+    
+    for (i in (r + 1):n)
+    {
+      for (j in 1:r)
+      {
+        H <- beta_pr
+        H[i, j] <- 0
+        bpvals_pr[i, j] <- blrtest(vec_pr, H, r)@pval[1]
+      }
+    }
+    
+    print(paste0("Results for VECM(", p, ", ", r, "):"))
+    print(beta_pr)
+    print(bpvals_pr)
+  }
+}
+```
+
+We begin with the VECM specified by r = 1. In this case, we have two stochastic trend with at least two variables are I(1) process. From the ADF test constructed in research report 1, we found evidence that CPI is I(0) process. If in this case, the first equilibrium relationship suggests that unemployment rate, cash rate and CPI are related in equilibrium. Consequently, either unemployment rate and cash rate are I(0) process or they are both I(1) and cointergrated process. This result matches what we found in research report 1 about the possibility of having two processes that are I(1) and cointergrated while one process is I(0). Thus, the result suggested that there is a possibility that unemployment rate and cash rate are I(1) processes and cointergrated with CPI is a I(0) process.
+
+Next, we look into VECM specified by r = 2. We have one stochastic trend with at least one variables are I(1) process. Here, we assume CPI is I(0) again. The first equilibrium relationship suggests that cpi and cash rate are related in equilibrium. We infer cash rate is a I(0). The second equilibrium relationship suggests that unemployment rate and cash rate are related in equilibrium. Based on the theorem, we must have at least one I(1) process. This process is unemployment rate as we identify that both cpi and cash rate are I(0) which have contradiction that cannot exist a equilibrium between an I(0) and I(1) process.
+
+From the result above, we found that imposing rank restriction on VAR lead us to inference that is not completely compatible with the inference we obtained in ADF test in research report 1. However, as we are examining the dynamic response, the inference of ADF test on individual process is less important and we focus on the adequate set constructed with VECMs to estimate the impulse response function.
+
+```{r vecm sub dr irf,echo=FALSE}
+vnames <- c("cpi","unemploy","cash")
+nmods <- length(adq_idx_vecm)
+for (i in 1:3)
+{
+  for (j in 1:3)
+  {
+    for (imod in 1:nmods)
+    {
+      p <- adq_set_vecm[imod, 1]
+      r <- adq_set_vecm[imod, 2]
+      title_i_j <- paste0("VECM(", p, ", ", r,
+                          "): Response of ", vnames[i],
+                          " to a shock in ", vnames[j])
+      
+      irf_i_j <- irf(VECM_est[[adq_idx_vecm[imod]]],
+                     n.ahead = 40,
+                     response = vnames[i],
+                     impulse = vnames[j],
+                     boot = TRUE)
+      
+      plot(irf_i_j, main = title_i_j)
+      cat("\r", title_i_j, "  ", sep = "")
+    }
+  }
+}
+```
+
+From the result of the VECMs, we can observe a main difference in model imposing restriction and unrestricted model. With the unrestricted model, we observed that the confidence interval is narrower than all models with restriction but all unrestricted models barely tell anything about how one variable response to a shock in another variable. Thus, we are looking into the restricted models for better interpretation. With the increase in lag order and restrictions, the restricted models also has narrower confidence interval and the pattern is more fluctuate. As more information is included in the model, we are increasing the fit of the models to the data which uncertainty is reducing but losing parsimony at the same time as the number of coefficient estimated increase exponentially.
+
+For example, we look into the response of unemployment to a shock in cash with p = 6 with different specification of r. When r = 0, the response fluctuate from negative to positive in short-run with small confidence interval and then slowly stabilize in medium-run and long-run. Comparing r = 1, r = 2 and r = 3, the confidence interval become narrower when value of r increase. Also, when we increase the value of r, the pattern of the response change slightly in medium-run and long-run. If we only select the minimum r we obtain from Johansen's test which is r = 1, from the graph, we will have a high level of uncertainty that we cannot conclude much.
+
+Next, we are going to estimate VAR models with the testing result and assumption we experiment above on the full available sample. VECMs are estimated to investigate the effect of increase sample size.
+
+```{r var dr full,echo=FALSE}
+data_new <- read.delim("report2.csv", header = TRUE,  sep = ",")
+new_cpi <- data_new$cpi_inflation
+new_dates <- as.yearqtr(data_new$quarter)
+new_unemploy <- data_new$unemployment_rate
+new_cash <- data_new$cash_rate
+new_x <- cbind(new_cpi,new_unemploy,new_cash)
+
+# VECM
+n <- 3
+VECM_est_long <- list()
+ic_vecm_long <- matrix(nrow = 4 * (1 + n),  ncol = 4)
+colnames(ic_vecm_long) <- c("p", "r", "aic", "bic")
+i <- 0
+for (p in 5:7)
+{
+  for (r in 0:n)
+  {
+    i <- i + 1
+    if (r == n)
+    {
+      VECM_est_long[[i]] <- VAR(new_x, p)
+    }
+    else if (r == 0)
+    {
+      VECM_est_long[[i]] <- VAR(diff(new_x), p - 1)
+    }
+    else
+    {
+      VECM_est_long[[i]] <- vec2var(ca.jo(new_x, K = p), r)
+    }
+    ic_vecm_long[i,] <- c(p, r, AIC(VECM_est_long[[i]]),
+                     BIC(VECM_est_long[[i]]))
+  }
+}
+
+ic_aic_vecm_long <- ic_vecm_long[order(ic_vecm_long[,3]),][1:10,]
+ic_bic_vecm_long <- ic_vecm_long[order(ic_vecm_long[,4]),][1:10,]
+ic_int_vecm_long <- intersect(as.data.frame(ic_aic_vecm_long),
+                         as.data.frame(ic_bic_vecm_long))
+
+adq_set_vecm_long <- as.matrix(arrange(as.data.frame(
+  ic_int_vecm_long), p, r))
+adq_idx_vecm_long <- match(data.frame(t(adq_set_vecm_long[, 1:2])),
+                      data.frame(t(ic_vecm_long[, 1:2])))
+
+# IRF
+vnames <- c("new_cpi","new_unemploy","new_cash")
+nmods <- length(adq_idx_vecm_long)
+for (i in 1:3)
+{
+  for (j in 1:3)
+  {
+    for (imod in 1:nmods)
+    {
+      p <- adq_set_vecm_long[imod, 1]
+      r <- adq_set_vecm_long[imod, 2]
+      title_i_j <- paste0("VECM(", p, ", ", r,
+                          "): Response of ", vnames[i],
+                          " to a shock in ", vnames[j])
+      
+      irf_i_j <- irf(VECM_est_long[[adq_idx_vecm_long[imod]]],
+                     n.ahead = 40,
+                     response = vnames[i],
+                     impulse = vnames[j],
+                     boot = TRUE)
+      
+      plot(irf_i_j, main = title_i_j)
+    }
+  }
+}
+```
+
+From the graph above generated by full sample, we have similar conclusion with the result generated by the sub-sample. The unrestricted models provide the narrowest confidence interval while the restricted model has a higher level uncertainty included. Between the restricted models, the increase of lag and r value allow models to capture a clearer pattern in medium and long-run and narrow down the confidence interval.
+
+When we compare the impulse response function created with the full sample and the sub-sample, we found the general pattern is similar. However, we observed that the response in medium-run and long-run adjusted in different magnitude. For example, we look into the response of cpi to cash rate shock with VECM(6,3). We found that the decline trend around horizon 10 decline more drastically in the graph on the right (full sample) than the graph on the left (sub-sample) and so as the confidence interval. The confidence interval is wider in the full sample than that of the sub-sample. This may due to the fact that both cpi and the cash rate increase significantly in the 4 data point we added which is year 2022. With the quantitative easing followed by the COVID, the CPI inflation spikes by simulating the economic growth. RBA is then started to raise the cash rate and try to lower the CPI inflation. Thus, we observed the uncertainty increase by the significant increase in both CPI and cash rate between each quarter.
+
+![](images/image-1975913446.png){width="320"}
+
+![](images/image-494518227.png){width="320"}
+
+With the MEMs, we have a better understanding on how variables affect each other and the relationship between each other. Using single equation models, we can increase the parsimony of the model but potential for missing some information related to how one variable change along with other variables. Thus, with important decision of RBA like monetary policy, using multiple equations models to estimate how they apply change in cash rate will affect the whole economy is recommended in order to make the decision that create the least impact to the economy and understand how the economy will change to make the next decision.

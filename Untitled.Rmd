@@ -1,0 +1,893 @@
+---
+title: ECON7350 Applied Econometrics of Macroeconomics and Finance Research Report
+  1
+output:
+  word_document: default
+  pdf_document: default
+date: "2023-04-20"
+---
+
+Name: Wong Hong Nam
+
+Student ID: 46337012
+
+# Question 1 - Forecasting Inflation for 2022 and 2023
+
+## Motivation and Practical Purpose
+
+Inflation is an indicator of declining purchasing power of a country which reflects the cost of living and the impact of economy growth. Policies are made such as increasing the interest rate to lower the inflation level.
+
+In order to have a better planning of policy implementation, using of the past data to interpret the trend and try to predict the future trend are critical for the decision making. Decision such as when to implement quantitative tightening or easing is important to keep the economy health without overheating or help simulate the growth of economy.
+
+During the outbreak of COVID, since the US federal reserve has implemented quantitative easing to simulate the economic growth. This not only introduce inflation to US but also introduce import inflation to country such as Australia. Reserve Bank in Australia will then need to make the decision on interest rate adjustment.
+
+Therefore,in this study, we obtained a dataset with quarterly time-series data of macroeconomic indicators in Australia from 1990Q3 to 2021Q4. In this practice, since we are focusing on inflation, forecast models are constricted to predict the CPI inflation for the next 8 quarter from 2022Q1 to 2023Q4. From the prediction result, we tend to obtain insight for making the decision on interest rate adjustment.
+
+## Forecast Model Identification
+
+To forecast inflation, we are looking into a sequence of data points that happened over time. In this case, it is the quarterly recorded CPI inflation from 1993Q4 to 2021Q4. We are going to predict the future CPI inflation by observing and analyzing the past CPI inflation data.
+
+Auto-regressive integrated moving average (ARIMA) is used as the statistic model to understand the past CPI inflation data and predict the future CPI inflation.
+
+Before selecting the model we are going to implement to the data. We will first look into data to investigate whether the process is stationary.
+
+```{r inflation plot, echo=FALSE}
+setwd('/Users/matthew/Documents/Documents - Hong’s MacBook Air/ECON7350 Applied Econometrics')
+library(forecast)
+library(dplyr)
+library(zoo)
+library(aTSA)
+
+# Read data 
+data <- read.delim("report1.csv", header = TRUE,  sep = ",")
+
+# Extract Variables
+dates <- as.yearqtr(data$quarter)
+cpi <- data$cpi_inflation
+
+# Plot Inflation along time
+plot(dates, cpi, type = "l", xlab = "Time (Quarters)",
+     main = "Australia CPI Inflation")
+```
+
+From the plot of cpi data, we are not able to observe any obvious seasonality or repeating cycles. Thus, we are going to use the Augmented Dickey-Fuller (ADF) test to check for the stationarity. The null hypothesis of the test is that there is a unit root present in the time series data. The alternative hypothesis of the test is that there is no unit root in the time series data which indicate the process is stationary.
+
+An adequate set of ADF regression models is first constructed and then ADF test is implemented to the set of models to check for the stationarity. In order to select adequate set of models, we will choose the model based on the value of the two information criteria, Akaike's Information Criterion (AIC) and Bayesian Information Criterion (BIC). The models will be arrange in ascending value for each criteria in separate list. To obtain the adequate set of models, the models that appear in both AIC and BIC list will be chosen for constructing the adequate set.
+
+```{r ADF test part 1, echo=FALSE}
+# ADF Regression Model
+TT <- length(cpi)
+ADF_est <- list()
+ic <- matrix( nrow = 30, ncol = 5 )
+colnames(ic) <- c("cons", "trend", "p", "aic", "bic")
+i <- 0
+for (const in 0:1)
+{
+  for (p in 0:9)
+  {
+    i <- i + 1
+    ADF_est[[i]] <- Arima(diff(cpi), xreg = cpi[-TT], # exclude last observation + add variable
+                          order = c(p, 0, 0),
+                          include.mean = as.logical(const), # include constant
+                          include.drift = F)
+    ic[i,] <- c(const, 0, p, ADF_est[[i]]$aic,
+                ADF_est[[i]]$bic)
+  }
+  
+  if (const)
+  {
+    # only add a specification with trend if there is a
+    # constant (i.e., exclude no constant with trend)
+    for (p in 0:9)
+    {
+      i <- i + 1
+      ADF_est[[i]] <- Arima(diff(cpi), xreg = cpi[-TT],
+                            order = c(p, 0, 0),
+                            include.mean = as.logical(const),
+                            include.drift = T) # whether include trend term
+      ic[i,] <- c(const, 1, p, ADF_est[[i]]$aic,
+                  ADF_est[[i]]$bic)
+    }
+  }
+}
+
+ic_aic <- ic[order(ic[,4]),][1:10,]
+ic_bic <- ic[order(ic[,5]),][1:10,]
+
+ic_int <- intersect(as.data.frame(ic_aic),as.data.frame(ic_bic))
+print(ic_int)
+
+```
+
+The interception has seven models: four with a constant and p = 4,5,6,8 and three with a constant and trend p = 4,5,6. Next, we will conduct a residual analysis.
+
+Ljung-Box test is constructed before applying ADF test to check is the white noise residuals are presented. This ensures that the residuals are independently distributed and mean independence.
+
+```{r ADF test part 2, echo=FALSE}
+adq_set <- as.matrix(arrange(as.data.frame(ic_int),
+                                   const, trend, p))
+adq_idx <- match(data.frame(t(adq_set[, 1:5])),
+                       data.frame(t(ic[, 1:5])))
+
+for (i in 1:length(adq_idx)){
+  checkresiduals(ADF_est[[adq_idx[i]]])
+}
+```
+
+From the Ljung-box test, we found that the among the 7 models in the adequate set, only three models with p = 5,8 with constant and no trend and p = 5 with both constant and trend exceed the 95% confidence intervals very slightly. Residuals in other models contain white noise. Thus, we only consider the ADF test for the p = 5,8 with constant and no trend and p = 5 with both constant and trend.
+
+```{r ADF test part 3, echo=FALSE}
+adq_set
+adf.test(cpi,nlag = 15)
+```
+
+Only "Type 2" and "Type 3" specifications are in our adequate set, so we ignore the output related to "Type 1". For all specifications in our adequate set, the null of a unit root can be rejected at 95% confidence interval. This indicate the process is empirically distinguishable from an integrated process.
+
+Next, we are going to construct the an adequate set of ARIMA models for forecasting.
+
+```{r ARIMA 1, echo=FALSE}
+# build an adequate set from ARIMAs with a possible linear trend
+TT <- length(cpi)
+ARIMA_est <- list()
+ic_arima <- matrix( nrow = 2 * 3 * 4 * 4, ncol = 7 )
+colnames(ic_arima) <- c("d", "cons", "trend", "p", "q", "aic", "bic")
+i <- 0
+for (d in 0:1)
+{
+  for (const in 0:1)
+  {
+    for (p in 0:3)
+    {
+      for (q in 0:3)
+      {
+        i <- i + 1
+        d1 <- as.logical(d)
+        c1 <- as.logical(const)
+        
+        try(silent = T, expr =
+              {
+                ARIMA_est[[i]] <- Arima(cpi, order = c(p, d, q),
+                                        include.constant = c1)
+                
+                ic_arima[i,] <- c(d, const, 0, p, q,
+                                  ARIMA_est[[i]]$aic,
+                                  ARIMA_est[[i]]$bic)
+              })
+        
+        if (const)
+        {
+          # only add a specification with trend if there is a
+          # constant (i.e., exclude no constant with trend)
+          i <- i + 1
+          
+          if (d1)
+          {
+            x <- c(0,cumsum(1:(TT - 1)))
+          }
+          else
+          {
+            x <- NULL
+          }
+          
+          try(silent = T, expr =
+                {
+                  ARIMA_est[[i]] <- Arima(cpi, order = c(p, d, q),
+                                          xreg = x,
+                                          include.constant = c1,
+                                          include.drift = T)
+                  
+                  ic_arima[i,] <- c(d, const, 1, p, q,
+                                    ARIMA_est[[i]]$aic,
+                                    ARIMA_est[[i]]$bic)
+                })
+        }
+      }
+    }
+  }
+}
+ic_aic_arima <- ic_arima[order(ic_arima[,6]),][1:10,]
+ic_bic_arima <- ic_arima[order(ic_arima[,7]),][1:10,]
+
+# find the intersection of AIC and BIC preferred sets
+ic_int_arima <- intersect(as.data.frame(ic_aic_arima),
+                          as.data.frame(ic_bic_arima))
+
+print(ic_int_arima)
+
+```
+
+From the unit root test result, we concluded that the process is empirically distinguishable from an integrated process. Thus, we will drop the ARIMA(2,1,3) model in the adequate set which contain integration and with high AIC and BIC values.
+
+```{r ARIMA 2, echo=FALSE}
+adq_set_arima <- as.matrix(arrange(as.data.frame(ic_int_arima[1:8,]),
+  d, const, trend, p))
+adq_idx_arima <- match(data.frame(t(adq_set_arima[, 1:5])),
+                       data.frame(t(ic_arima[, 1:5])))
+
+# Check the residuals for specifications in the adequate set.
+for (i in 1:length(adq_idx_arima))
+{
+  checkresiduals(ARIMA_est[[adq_idx_arima[i]]])
+}
+```
+
+With the residual analysis, all of the residuals look fine so the construction of the adequate set is completed.
+
+The adequate set is shown below:
+
+```{r Adequate set, echo=FALSE}
+print(adq_set_arima)
+```
+
+## Forecast Computation
+
+With the adequate set constructed from above, we are going to use these models to do forecast on CPI inflation.
+
+Here is the forecast of cpi inflation with different models in adequate set with confidence interval.
+
+```{r cpi_fcst, echo=FALSE}
+# Do the forecasting
+pre2021 <- as.Date(dates) <= as.Date("2021-12-31")
+date_fcst <- append(data$quarter,c("2022Q1","2022Q2","2022Q3","2022Q4","2023Q1","2023Q2","2023Q3","2023Q4"))
+dates_fcst <- as.yearqtr(date_fcst)
+hrz <- 8
+xticks <- c(TT - 3 * hrz + c(1, 2 * hrz, 3 * hrz ,4 * hrz))
+fcst_cpi <- vector(mode = "list", length(adq_set_arima))
+for (i in 1:nrow(adq_set_arima))
+{
+  model_p_d_q <- adq_set_arima[i, c(4, 1, 5)]
+  fcst_cpi[[i]] <- forecast::forecast(
+    Arima(cpi[pre2021], model_p_d_q,
+          include.constant = adq_set_arima[i,2]),
+    h = hrz, level = c(68, 95))
+  
+  title_p_d_q <- paste("ARIMA(",
+                       as.character(model_p_d_q[1]), ", ",
+                       as.character(model_p_d_q[2]), ", ",
+                       as.character(model_p_d_q[3]), ")",
+                       sep = "")
+  
+  plot(fcst_cpi[[i]], include = hrz * 2, ylab = colnames(cpi),
+       main = title_p_d_q, xaxt = "n",
+       ylim = c(-1, 10))
+  lines(1:TT, rep(0, TT), col = "red")
+  axis(1, at = xticks, labels = dates_fcst[xticks])
+}
+```
+
+## Interpretation and Inference
+
+First, from all the models in the adequate set, they have very similar forecast. They predicted that the cpi start declining gradually and then stabilize from 2022 Q1 to 2023 Q4. However, they also indicated that there are potential upsides for the CPI to raise to a further higher level and then remain at the high level.
+
+Second, the predictive intervals increase slightly as the forecast horizon increase. They are narrower for forecasts in the beginning of the forecasting period and wider towards the end of the forecasting period.
+
+Based on the forecast results from the models, they show that the even with the uncertainty involved, there are not much dramatic increase in both 68% and 95% confidence interval in CPI. This allow the Reserve Bank of Australia to slow down the pace of raising interest rate or even maintain the current level of interest rate in order to tackle with inflation. However, as we know, the actual CPI of 2022 increase dramatically from 3.5% in 2021 Q4 to 5.1% in 2022 Q1 and it keep increasing without any signals to start decline. Thus, the forecasting result cannot capture the uncertainty that causing the huge spike in cpi from 2022 Q1.
+
+| Month / Quarter | CPI **Annual change (%)** |
+|-----------------|---------------------------|
+| Mar-22          | 5.1                       |
+| Jun-22          | 6.1                       |
+| Sep-22          | 7.3                       |
+| Dec-22          | 7.8                       |
+
+# Question 2 - Dynamic Effects of Unemployment Rate Shocks and Cash Target Rate Shocks on Inflation
+
+## Motivation and Practical Purpose
+
+From the last study based on past inflation data to forecast future inflation trend, we have found that the prediction is off the chart which caused by uncertainty that we do not know. Therefore, we wonder is there any other variables which create shocks to inflation and how inflation respond to shocks in short term and long term. The dynamic relationship between the macroeconomic indicators may provide some more hints and better understanding on how one indicator interact with other indicators.
+
+This is important that we can have an expectation that closer to the true value in the future so that the decision made on implementing policies can fit better to the current economic environment. In order to improve on adjusting the expectations on CPI, we wonder like to investigate the dynamic relationship between the unemployment rate, cash target rate and CPI. When we understand how the unemployment rate and cash target rate create shocks that affect CPI, we can have implement policies on tackling either cash target rate, unemployment or both which may lead to a change in CPI.
+
+In this study, we are going to construct models that describe the dynamic relationship between cash target rate, unemployment rate and CPI and interpret how changes in cash target rate and unemployment rate affect CPI. With the models, we tend to consider constructing polices that more than just adjusting the interest rate to tackle the inflation but also polices related to cash target rate and unemployment.
+
+## Model Identification
+
+To estimate the dynamic relationship between variables, we will use Auto-regressive distributed lag (ARDL) model to examine the cointegrating relationship between variables.
+
+Before looking into the cointegration between variables, we will examine the stationarity of each process first.
+
+```{r ARDL Quick View, echo=FALSE}
+setwd('/Users/matthew/Documents/Documents - Hong’s MacBook Air/ECON7350 Applied Econometrics')
+
+library(forecast)
+library(dplyr)
+library(zoo)
+library(aTSA)
+
+# create a function to estimate a range of ADF regression specifications
+# in levels along with the AICs and BICs
+ADF_estimate_lev <- function(y,  p_max = 9){
+  TT <- length(y)
+  ADF_est <- list()
+  ic <- matrix(nrow = 3 * (1 + p_max), ncol = 5)
+  colnames(ic) <- c("const", "trend", "p", "aic", "bic")
+  i <- 0
+  for (const in 0:1)
+  {
+    for (p in 0:p_max)
+    {
+      i <- i + 1
+      try(silent = T, expr =
+            {
+              ADF_est[[i]] <- Arima(diff(y), xreg = y[-TT],
+                                    order = c(p, 0, 0),
+                                    include.mean = as.logical(const),
+                                    include.drift = F)
+              ic[i,] <- c(const, 0, p, ADF_est[[i]]$aic,
+                          ADF_est[[i]]$bic)
+            })
+    }
+    
+    if (const)
+    {
+      # only add a specification with trend if there is a
+      # constant (i.e., exclude no constant with trend)
+      for (p in 0:p_max)
+      {
+        i <- i + 1
+        try(silent = T, expr =
+              {
+                ADF_est[[i]] <- Arima(diff(y), xreg = y[-TT],
+                                      order = c(p, 0, 0),
+                                      include.mean = as.logical(const),
+                                      include.drift = T)
+                ic[i,] <- c(const, 1, p, ADF_est[[i]]$aic,
+                            ADF_est[[i]]$bic)
+              })
+      }
+    }
+  }
+  
+  ic_aic <- ic[order(ic[,4]),][1:10,]
+  ic_bic <- ic[order(ic[,5]),][1:10,]
+  
+  return(list(ADF_est = ADF_est, ic = ic,
+              ic_aic = ic_aic, ic_bic = ic_bic))
+}
+
+# create a function to estimate a range of ADF regression specifications
+# in differences along with the AICs and BICs
+ADF_estimate_diff <- function(y, p_max = 9){
+  TT <- length(diff(y))
+  ADF_est_diff <- list()
+  ic_diff <- matrix(nrow = 3 * (1 + p_max), ncol = 5)
+  colnames(ic_diff) <- c("const", "trend", "p", "aic", "bic")
+  i <- 0
+  for (const in 0:1)
+  {
+    for (p in 0:p_max)
+    {
+      i <- i + 1
+      try(silent = T, expr =
+            {
+              ADF_est_diff[[i]] <- Arima(diff(diff(y)),
+                                         xreg = diff(y)[-TT],
+                                         order = c(p, 0, 0),
+                                         include.mean = as.logical(const),
+                                         include.drift = F)
+              ic_diff[i,] <- c(const, 0, p, ADF_est_diff[[i]]$aic,
+                               ADF_est_diff[[i]]$bic)
+            })
+    }
+    
+    if (const)
+    {
+      # only add a specification with trend if there is a
+      # constant (i.e., exclude no constant with trend)
+      for (p in 0:p_max)
+      {
+        i <- i + 1
+        try(silent = T, expr =
+              {
+                ADF_est_diff[[i]] <- Arima(diff(diff(y)),
+                                           xreg = diff(y)[-TT],
+                                           order = c(p, 0, 0),
+                                           include.mean = as.logical(const),
+                                           include.drift = T)
+                ic_diff[i,] <- c(const, 1, p, ADF_est_diff[[i]]$aic,
+                                 ADF_est_diff[[i]]$bic)
+              })
+      }
+    }
+  }
+  
+  ic_aic_diff <- ic_diff[order(ic_diff[,4]),][1:10,]
+  ic_bic_diff <- ic_diff[order(ic_diff[,5]),][1:10,]
+  
+  return(list(ADF_est_diff = ADF_est_diff,
+              ic_diff = ic_diff,
+              ic_aic_diff = ic_aic_diff,
+              ic_bic_diff = ic_bic_diff))  
+}
+
+# Read data 
+data <- read.delim("report1.csv", header = TRUE,  sep = ",")
+
+# Extract Variables
+dates <- as.yearqtr(data$quarter)
+cpi <- data$cpi_inflation
+employ <- data$unemployment_rate
+cash_rate <- data$cash_rate
+
+# Plot
+plot(data$cpi, type = "l", xlab = "Time (Quarters)",
+     main = "CPI")
+plot(data$unemployment_rate, type = "l", xlab = "Time (Quarters)",
+     main = "Unemployment Rate")
+plot(data$cash_rate, type = "l", xlab = "Time (Quarters)",
+     main = "Cash Target Rate")
+```
+
+From the plot above, we are not able to observe any obvious seasonality or repeating cycles. Therefore, we are going to implement ADF test to find out whether each of these process is stationary by creating ADF regressor and construct an adequate set of models based on AIC and BIC.
+
+First, we focus on variable cpi_inflation.
+
+```{r ARDL CPI ADF 1,echo=FALSE}
+CPI_ADF_lev <- ADF_estimate_lev(cpi, p_max = 15)
+print(CPI_ADF_lev$ic_aic)
+print(CPI_ADF_lev$ic_bic)
+
+cpi_adq_set <- as.matrix(arrange(as.data.frame(
+  rbind(CPI_ADF_lev$ic_aic[c(2, 3, 6),],
+        CPI_ADF_lev$ic_bic[c(1, 3, 4),])),
+  const, trend, p))
+cpi_adq_idx <- match(data.frame(t(cpi_adq_set[, 1:3])),
+                     data.frame(t(CPI_ADF_lev$ic[, 1:3])))
+
+print(cpi_adq_set)
+```
+
+From the AIC and BIC list, we selected the 4 models from each list with low AIC and BIC values. Since there are two models overlap, the adequate set contain a total of six models to move on the next step where residual analysis take place.
+
+```{r ARDL CPI ADF 2,echo=FALSE}
+
+for (i in 1:length(cpi_adq_idx)){
+  checkresiduals(CPI_ADF_lev$ADF_est[[cpi_adq_idx[i]]])
+}
+```
+
+From residual analysis, we found that five out of seven exceed the 95% confidence intervals slightly. Hence, we are going to drop models p = 6 with constant but no trend and p = 9 with constant but no trend.
+
+```{r ARDL CPI ADF 3, echo=FALSE}
+cpi_adq_set <- as.matrix(arrange(as.data.frame(
+  rbind(CPI_ADF_lev$ic_aic[c(2, 6),],
+        CPI_ADF_lev$ic_bic[c(1, 3),])),
+  const, trend, p))
+cpi_adq_idx <- match(data.frame(t(cpi_adq_set[, 1:3])),
+                     data.frame(t(CPI_ADF_lev$ic[, 1:3])))
+
+cpi_adq_set
+adf.test(cpi, nlag = 10)
+```
+
+Only "Type 2" and "Type 3" specifications are in our adequate set, so we ignore the output related to "Type 1". For specifications with a constant, no trend, all specifications, the null is rejected at the 5% significance level. For specifications with a constant and with a trend, the same conclusion holds for all specifications except p = 8. Our concern is the one with p= 8 since it is in our adequate set.
+
+Overall we might lean towards concluding that cpi_inflaition is empirically distinguishable from a unit root process, with some ambiguity arising from the specification uncertainty that results from the constant with trend and p = 8 specification fail to reject the null at the 5% significance level.
+
+Next, we focus on the variable unemployment_rate.
+
+```{r ARDL UNEM ADF 1, echo=FALSE}
+unem_ADF_lev <- ADF_estimate_lev(employ, p_max = 15)
+print(unem_ADF_lev$ic_aic)
+print(unem_ADF_lev$ic_bic)
+
+unem_adq_set <- as.matrix(arrange(as.data.frame(
+  rbind(unem_ADF_lev$ic_aic[c(1, 4, 8),],
+        unem_ADF_lev$ic_bic[c(2, 6, 7),])),
+  const, trend, p))
+unem_adq_idx <- match(data.frame(t(unem_adq_set[, 1:3])),
+                     data.frame(t(unem_ADF_lev$ic[, 1:3])))
+
+print(unem_adq_set)
+```
+
+From the AIC and BIC list, we selected a total of six models with three from lowest BIC in AIC list and three from BIC list that are not in AIC list but with low AIC value.
+
+```{r ARDL UNEM ADF 2, echo=FALSE}
+for (i in 1:length(unem_adq_idx)){
+  checkresiduals(unem_ADF_lev$ADF_est[[unem_adq_idx[i]]])
+}
+```
+
+All residuals look fine for the adequate set selected. We fail to reject white noise residuals at 5% sig level for all specifications. Next, we are going to proceed to the ADF test.
+
+```{r ARDL UNEM ADF 3,echo=FALSE}
+unem_adq_set
+adf.test(employ, nlag = 10)
+```
+
+In the adequate set, we contain all three type on models. All specifications of the models in the adequate set fail to reject the null at the 5% significance level. We may conclude that unemployment rate process is not empirically distinguishable from a unit root process. Thus, we are going to repeat these procedures with differencing unemployment rate.
+
+```{r ARDL diff unem adf 1, echo=FALSE}
+unem_ADF_diff <- ADF_estimate_diff(employ, p_max = 15)
+print(unem_ADF_diff$ic_aic_diff)
+print(unem_ADF_diff$ic_bic_diff)
+
+unem_adq_set_diff <- as.matrix(arrange(as.data.frame(
+  unem_ADF_diff$ic_bic_diff[c(1, 2, 3, 5),]),
+  const, trend, p))
+unem_adq_idx_diff <- match(data.frame(
+  t(unem_adq_set_diff[, 1:3])),
+  data.frame(
+    t(unem_ADF_diff$ic_diff[, 1:3])))
+
+print(unem_adq_set_diff)
+```
+
+An adequate set of four models is agreed by both AIC and BIC. So, we now move on to residual analysis.
+
+```{r ARDL diff unem ADF 2, echo=FALSE}
+for (i in 1:length(unem_adq_idx_diff))
+{
+  checkresiduals(
+    unem_ADF_diff$ADF_est_diff[[unem_adq_idx_diff[i]]])
+}
+```
+
+All residuals look fine with any confidence intervals. Then, we proceed to ADF testing for the difference of unemployment rate.
+
+```{r ARDL diff unem adf 3, echo=FALSE}
+unem_adq_set_diff
+adf.test(diff(employ))
+```
+
+The null is rejected for all specs. We concluded that differencing unemployment rate is empirically distinguishable from I(1). We infer that the order of integration is not greater than one with a high degree of confidence.
+
+Third, we are looking into cash_rate.
+
+```{r ARDL cash rate ADF 1, echo=FALSE}
+cash_ADF_lev <- ADF_estimate_lev(cash_rate, p_max = 15)
+print(cash_ADF_lev$ic_aic)
+print(cash_ADF_lev$ic_bic)
+
+cash_adq_set <- as.matrix(arrange(as.data.frame(
+  rbind(cash_ADF_lev$ic_bic[c(1, 2, 3, 5, 8),])),
+  const, trend, p))
+cash_adq_idx <- match(data.frame(t(cash_adq_set[, 1:3])),
+                      data.frame(t(cash_ADF_lev$ic[, 1:3])))
+
+print(cash_adq_set)
+```
+
+From the AIC and BIC list, an adequate set is constructed based on the models that appears in both lists. A total of five models are in the adequate list. The residual analysis is carried out on the adequate set.
+
+```{r ARDL cash rate adf 2,echo=FALSE}
+for (i in 1:length(cash_adq_idx)){
+  checkresiduals(cash_ADF_lev$ADF_est[[cash_adq_idx[i]]])
+}
+```
+
+All residuals look fine with any confidence intervals. Then, we proceed to ADF testing for the cash rate.
+
+```{r ARDL cash rate adf 3, echo=FALSE}
+cash_adq_set
+adf.test(cash_rate, nlag = 10)
+```
+
+In the adequate set, we contain only "Type 2" and "Type 3" models. All specifications of the "Type 3" models in the adequate set (p =1 , 2, 3, 4) reject the null at the 5% significant level while the only "Type 2" model fail to reject the null at the 5% significance level. If we adjust the significant level to 1%, more of them in the adequate set sightly fail to reject the the null. Since we cannot obtain a consensus on all models in adequate set with a very small significant level. We try to perform the test on differencing cash rate.
+
+```{r ARDL diff cash rate ADF 1,echo=FALSE}
+cash_ADF_diff <- ADF_estimate_diff(cash_rate, p_max = 15)
+print(cash_ADF_diff$ic_aic_diff)
+print(cash_ADF_diff$ic_bic_diff)
+
+cash_adq_set_diff <- as.matrix(arrange(as.data.frame(
+  cash_ADF_diff$ic_bic_diff[c(1, 2, 3, 4),]),
+  const, trend, p))
+cash_adq_idx_diff <- match(data.frame(
+  t(cash_adq_set_diff[, 1:3])),
+  data.frame(
+    t(cash_ADF_diff$ic_diff[, 1:3])))
+print(cash_adq_set_diff)
+```
+
+From AIC and BIC list, we selected the interception of models in these two list and resulted in obtaining 4 models in the adequate set.
+
+```{r ARDL diff cash rate adf 2, echo=FALSE}
+for (i in 1:length(cash_adq_idx_diff))
+{
+  checkresiduals(
+    cash_ADF_diff$ADF_est_diff[[cash_adq_idx_diff[i]]])
+}
+```
+
+For residual analysis, all residuals look fine with 95% confidence intervals.
+
+```{r ARDL diff cash rate adf 3, echo=FALSE}
+cash_adq_set_diff
+adf.test(diff(cash_rate))
+```
+
+For all specifications in the adequate set are universally rejected at a very small significant level. The process generating differencing cash rate is clearly distinguishable from a unit root.
+
+We now try to test for a cointegrating relation involving all three processes.
+
+```{r cointegrate ,echo=FALSE}
+eg_reg <- lm( cpi_inflation ~ unemployment_rate + cash_rate,data)
+eg_res <- eg_reg$residuals
+
+egr_ADF_lev <- ADF_estimate_lev(eg_res, p_max = 15)
+print(egr_ADF_lev$ic_aic)
+print(egr_ADF_lev$ic_bic)
+```
+
+We will only consider specifications without a constant or trend since we are focusing on residuals. A total of ten models are selected in the adequate set.
+
+```{r coin 2,echo=FALSE}
+egr_adq_set <- as.matrix(arrange(as.data.frame(
+  rbind(egr_ADF_lev$ic_aic[c(1, 2, 3, 5),],
+        egr_ADF_lev$ic_bic[c(1, 2, 3, 4, 5,10),])),
+  const, trend, p))
+egr_adq_idx <- match(data.frame(t(egr_adq_set[, 1:3])),
+                     data.frame(t(egr_ADF_lev$ic[, 1:3])))
+
+for (i in 1:length(egr_adq_idx))
+{
+  checkresiduals(egr_ADF_lev$ADF_est[[egr_adq_idx[i]]])
+}
+# All residuals look OK.
+```
+
+All residuals look fine at a very small siginificant level. Then we are going to implement the Engle-Granger test for each of the specifications in the adequate set.
+
+```{r coi n3,echo=FALSE}
+print(egr_adq_set)
+# Now, we can use the function coint.test form the aTSA package to implement
+# the E-G test for the specs in the adequate set.
+eg_test <- matrix(nrow = 1, ncol = 4)
+colnames(eg_test) <- rep("", 4)
+rownames(eg_test) <- c("No const, no trend")
+for (l in 1:4){
+  eg_l <- coint.test(cpi, cbind(employ,cash_rate), nlag = l, output = F)
+  eg_test[, l] <- eg_l[1, 3]
+  colnames(eg_test)[l] <- paste("Lag", l)
+}
+print(eg_test)
+```
+
+For specifications with no constant and no trend, the unit root in the residuals is rejected at low significance levels. The best inference we can draw is that if the residual in the regression cpi_inflation on a constant, unemployment_rate and cash_rate is mean-independent, then it also does not have a unit root.
+
+Thus, based on the above testing result of each process, there are possibility that any two processes are I(1) and cointergrated while the remaining one is I(0). For instance, unemployment rate and cash rate are I(1) processes and cointergrated while CPI inflation is a I(0) process. From the result above, there are no identifiable equilibrium relationship between cpi_inflation and unemployment rate.
+
+Next, we are going to study the dynamic relationship between these 3 processes.
+
+```{r dyl ardl 1, echo=FALSE}
+library(ARDL)
+# ARDL
+ardl_est <- list()
+ic_ardl <- matrix(nrow = 5 * 6 * 6, ncol = 5)
+colnames(ic_ardl) <- c("p", "l", "c","aic", "bic")
+
+# cycle through all the possible variants
+i <- 0;
+for (p in 1:5)
+{
+  for (l in 0:5)
+      {
+    for (c in 0:5) {
+        i <- i + 1
+        ardl_est[[i]] <- ardl(cpi_inflation ~ unemployment_rate + cash_rate,
+                              data, order = c(p, l, c))
+        ic_ardl[i,] <- c(p, l, c,AIC(ardl_est[[i]]),
+                         BIC(ardl_est[[i]]))
+        }
+      }
+}
+
+ic_aic_ardl <- ic_ardl[order(ic_ardl[,4]),][1:10,]
+ic_bic_ardl <- ic_ardl[order(ic_ardl[,5]),][1:10,]
+print(ic_aic_ardl)
+print(ic_bic_ardl)
+```
+
+We have created a set of combination with different lags of each variable which the maximum of lag is set to be five for each variable to obtain the adequate set of models with low AIC and BIC value. From the AIC and BIC list, we chose models that appear in both list as the adequate set. A total of four models are included in the adequate set.
+
+```{r dyl ardl 2, echo=FALSE}
+# find the intersection of AIC and BIC preferred sets
+ic_int_ardl <- intersect(as.data.frame(ic_aic_ardl),
+                         as.data.frame(ic_bic_ardl))
+
+adq_set_ardl <- as.matrix(arrange(ic_int_ardl, p, l, c))
+adq_idx_ardl <- match(data.frame(t(adq_set_ardl[, 1:3])),
+                      data.frame(t(ic_ardl[, 1:3])))
+print(ic_int_ardl)
+```
+
+Then we constructed residual analysis on the adequate set.
+
+```{r dyl ardl 3, echo=FALSE}
+# Residual anaylsis
+for (i in 1:length(adq_idx_ardl))
+{
+  order <- adq_set_ardl[i,1:3]
+  acf(as.numeric(ardl_est[[adq_idx_ardl[i]]]$residuals),
+      lag.max = 10, xlim = c(1, 10), xaxp = c(1, 10, 1),
+      ylim = c(-0.25, 0.25), yaxp = c(-0.15, 0.15, 2),
+      main = paste("Residuals ACF for ARDL(",
+                   order[1], ", ",
+                   order[2], ", ",
+                   order[3], ")", sep = ""))
+}
+```
+
+For all four models, the residuals look fine. We can observe that all models show a spike in lag 5 and lag 8 but they are not significant so the estimated residuals are not auto-correlated.
+
+## Estimating and Testing
+
+Next, we move on to estimate the dynamic relationship between CPI inflation, unemployment rate and cash rate by using the adequate set of models we constructed. We will pass the adequate set to the impluse response function and long run multipler with different level of confidence interval to estimate the relationship between the three variables.
+
+```{r dyl ardl 4, echo=FALSE}
+source("ardl_irfs_ci.R")
+
+# DY
+z68 = qnorm(1 - (1 - .68) / 2)
+z95 = qnorm(1 - (1 - .95) / 2)
+j <- 1 # select responses to productivity
+y_min <- Inf
+y_max <- -Inf
+irfs_ci <- list()
+lrms_ci <- array(dim = c(3, 5, length(adq_idx_ardl)),
+                 dimnames = list(c("Constant", "Unemployment Rate","Cash Rate"),
+                                 c("Estimate", "lb95", "lb68",
+                                   "ub68", "ub95"),
+                                 1:length(adq_idx_ardl)))
+adj_ci <- matrix(nrow = 5, ncol = length(adq_idx_ardl),
+                 dimnames = list(c("Estimate", "lb95", "lb68",
+                                   "ub68", "ub95"),
+                                 1:length(adq_idx_ardl)))
+
+for (i in 1:length(adq_idx_ardl))
+{
+  # compute irfs and CIs
+  irfs_ci_i <- ardl_irfs_ci(ardl_est[[adq_idx_ardl[i]]], conf = 0.68)
+  irfs_ci[[i]] <- cbind(irfs_ci_i$lb[, j],
+                        irfs_ci_i$md[, j],
+                        irfs_ci_i$ub[, j])
+  y_min <- min(y_min, irfs_ci_i$lb[, j])
+  y_max <- max(y_max, irfs_ci_i$ub[, j])
+  
+  # compute lrms and CIs
+  lrms_ci_i <- multipliers(ardl_est[[adq_idx_ardl[i]]])[, 1:3]
+  lrms_ci[, , i] <- cbind(lrms_ci_i[, 2],
+                          lrms_ci_i[, 2] - z95 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] - z68 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] + z68 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] + z95 * lrms_ci_i[, 3])
+  
+  # compute speed of adjustment and CIs
+  adj_ci_i <- summary(recm(ardl_est[[adq_idx_ardl[i]]], case = 2))
+  adj_ci[, i] <- c(adj_ci_i$coefficients["ect", 1],
+                   adj_ci_i$coefficients["ect", 1]
+                   - z95 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   - z68 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   + z68 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   + z95 * adj_ci_i$coefficients["ect", 2])
+}
+
+print(lrms_ci_i)
+```
+
+From the result of the long-run multipler, we obtained the estimation above with the equation:
+
+cpi_infaltion = -0.22\*unemployment_rate + 0.21\*cash_rate + 3.00 (correct to 2 decimal place)
+
+These estimates suggest that 1% of unemployment rate increase will lead to 0.22% decrease in CPI inflation while 1% of cash rate increase will lead to 0.21% increase in CPI inflation.
+
+To examine the expected effect on CPI, we compute the impulse response plot to CPI from the adequate set.
+
+First, we are going to look into the cumulative impulse response to unemployment rate shock.
+
+```{r dyl ardl 5, echo=FALSE}
+shock_name <- "Unemployment Rate Shock"
+
+for (i in 1:length(adq_idx_ardl))
+{
+  order <- adq_set_ardl[i,1:3]
+  plot(0:40, irfs_ci[[i]][, 2], type = "l", ylim = c(y_min, y_max),
+       ylab = "Impulse Response", xlab = "Horizon",
+       main = paste("ARDL(", order[1], ", ", order[2], ", ",
+                    order[3],"): Cumulative IRFs to ", shock_name, sep = ""))
+  lines(0:40, irfs_ci[[i]][, 1], type = "l", col = "blue")
+  lines(0:40, irfs_ci[[i]][, 3], type = "l", col = "blue")
+  lines(0:40, numeric(41), type = "l", col = "red")
+}
+
+for (j in 1:3)
+{
+  assign(paste0("lrm_ci_", dimnames(lrms_ci)[[1]][j]), lrms_ci[j,,])
+}
+print('Unemployment Rate')
+print(`lrm_ci_Unemployment Rate`)
+```
+
+In short run, from all the models in the adequate set agreed that CPI will increase quickly at the time of the impact and then decrease at one year after the impact. After that CPI will climb quickly to the highest level and slow down.
+
+In long run, for ten years after impact which is the long-run effect, CPI will increase slowly and become quite steady without any dramatic change in longer horizon.
+
+Next, we are looking into the cumulative impulse response to cash rate shock.
+
+```{r dyl ardl 6, echo=FALSE}
+# DY
+z68 = qnorm(1 - (1 - .68) / 2)
+z95 = qnorm(1 - (1 - .95) / 2)
+j <- 2 # select responses to productivity
+y_min <- Inf
+y_max <- -Inf
+irfs_ci <- list()
+lrms_ci <- array(dim = c(3, 5, length(adq_idx_ardl)),
+                 dimnames = list(c("Constant", "Unemployment Rate","Cash Rate"),
+                                 c("Estimate", "lb95", "lb68",
+                                   "ub68", "ub95"),
+                                 1:length(adq_idx_ardl)))
+adj_ci <- matrix(nrow = 5, ncol = length(adq_idx_ardl),
+                 dimnames = list(c("Estimate", "lb95", "lb68",
+                                   "ub68", "ub95"),
+                                 1:length(adq_idx_ardl)))
+
+for (i in 1:length(adq_idx_ardl))
+{
+  # compute irfs and CIs
+  irfs_ci_i <- ardl_irfs_ci(ardl_est[[adq_idx_ardl[i]]], conf = 0.68)
+  irfs_ci[[i]] <- cbind(irfs_ci_i$lb[, j],
+                        irfs_ci_i$md[, j],
+                        irfs_ci_i$ub[, j])
+  y_min <- min(y_min, irfs_ci_i$lb[, j])
+  y_max <- max(y_max, irfs_ci_i$ub[, j])
+  
+  # compute lrms and CIs
+  lrms_ci_i <- multipliers(ardl_est[[adq_idx_ardl[i]]])[, 1:3]
+  lrms_ci[, , i] <- cbind(lrms_ci_i[, 2],
+                          lrms_ci_i[, 2] - z95 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] - z68 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] + z68 * lrms_ci_i[, 3],
+                          lrms_ci_i[, 2] + z95 * lrms_ci_i[, 3])
+  
+  # compute speed of adjustment and CIs
+  adj_ci_i <- summary(recm(ardl_est[[adq_idx_ardl[i]]], case = 2))
+  adj_ci[, i] <- c(adj_ci_i$coefficients["ect", 1],
+                   adj_ci_i$coefficients["ect", 1]
+                   - z95 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   - z68 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   + z68 * adj_ci_i$coefficients["ect", 2],
+                   adj_ci_i$coefficients["ect", 1]
+                   + z95 * adj_ci_i$coefficients["ect", 2])
+}
+
+shock_name <- "Cash Rate Shock"
+
+for (i in 1:length(adq_idx_ardl))
+{
+  order <- adq_set_ardl[i,1:3]
+  plot(0:40, irfs_ci[[i]][, 2], type = "l", ylim = c(y_min, y_max),
+       ylab = "Impulse Response", xlab = "Horizon",
+       main = paste("ARDL(", order[1], ", ", order[2], ", ",
+                    order[3],"): Cumulative IRFs to ", shock_name, sep = ""))
+  lines(0:40, irfs_ci[[i]][, 1], type = "l", col = "blue")
+  lines(0:40, irfs_ci[[i]][, 3], type = "l", col = "blue")
+  lines(0:40, numeric(41), type = "l", col = "red")
+}
+
+for (j in 1:3)
+{
+  assign(paste0("lrm_ci_", dimnames(lrms_ci)[[1]][j]), lrms_ci[j,,])
+}
+print('Cash Rate')
+print(`lrm_ci_Cash Rate`)
+```
+
+In short run, there are different scenarios from the models in adequate set. All of them agreed that the CPI will both increase at the time of the impact and one year after then start dropping. But the models disagree on the degree of impact that introduced. With the increase in lag for cash rate, the impact is more dramatic. We can observe that CPI increase more quickly with more lags in cash rate so as the drop afterwards in later horizon.
+
+In long run, all models agreed that CPI will decrease slowly and become quite steady without any dramatic change in longer horizon from ten years after the impact.
+
+## Interpretation and Inference
+
+From the estimation result above, we found that the relationship between CPI and unemployment rate from the result above is consistent with the theory that inflation has inverse relationship with unemployment where unemployment rate drops when inflation rises. However, from the result, we found that inflation increase when cash rate increase. In reality, increase in cash rate will increase the cost for loans as lenders and banks will increase the interest rate to react with the increase in cash rate. The increase in cash rate is supposed to lower the inflation level. Thus, we can observe that the long-run effect of cash rate on CPI is reflecting to the reality.
+
+Besides, an interesting founding can be observed is that the effect of the intercept is larger that the change in either unemployment rate and cash rate. This indicate that both unemployment rate and cash rate have small impact to inflation and some other indicators that not exist in our data have higher effect on inflation are included in the intercept of the model.
+
+If we would like to implement any policy based on the models we constructed, when we observed there are a decrease in unemployment rate and cash rate remain unchanged, we should consider inflation start to raise within a year and continue to increase gradually so we may consider that is the inflation level worth raising interest rate. When we implement an increase in cash rate while unemployment rate remain unchanged or slightly increase but not more than the increase in cash rate, we expected that inflation will spike in the short-run and drop in the long-run. This simulate the effect of adjusting cash rate on inflation.
